@@ -20,11 +20,17 @@ export default {
     const origin=initial.headers.get('Origin');
     const configuredOrigins=String(env.CORS_ALLOWED_ORIGINS || '').split(',').map(x=>x.trim()).filter(Boolean);
     const allowed=[url.origin,...configuredOrigins];
-    if(origin && !allowed.includes(origin)) {
+    const contentType=(initial.headers.get('Content-Type') || '').toLowerCase();
+    // ChatGPT 的 OAuth 授权页可能运行在 sandboxed/opaque WebView 中；HTML form 导航会发送 Origin: null。
+    // 仅允许这一条 POST /authorize + x-www-form-urlencoded 导航继续进入 OAuth 自身的 nonce/密码/redirect 校验。
+    // 其他 null Origin（尤其 /mcp）仍拒绝，也不返回 Access-Control-Allow-Origin: null。
+    const oauthNullOriginForm=origin === 'null' && path === '/authorize' && initial.method === 'POST' && contentType.startsWith('application/x-www-form-urlencoded');
+    if(origin && !allowed.includes(origin) && !oauthNullOriginForm) {
       console.warn('origin_not_allowed',JSON.stringify({origin,path,method:initial.method,allowed}));
       return json({error:'origin_not_allowed',origin},403);
     }
-    const cors=origin ? {'Access-Control-Allow-Origin':origin,Vary:'Origin','Access-Control-Allow-Headers':'Authorization,Content-Type,Accept,MCP-Protocol-Version','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Expose-Headers':'WWW-Authenticate'} : {};
+    const corsOrigin=origin && allowed.includes(origin) ? origin : null;
+    const cors=corsOrigin ? {'Access-Control-Allow-Origin':corsOrigin,Vary:'Origin','Access-Control-Allow-Headers':'Authorization,Content-Type,Accept,MCP-Protocol-Version','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Expose-Headers':'WWW-Authenticate'} : {};
     if(initial.method === 'OPTIONS') return new Response(null,{status:204,headers:cors});
     let request=initial;
     if(initial.method === 'POST') {try {request=await bounded(initial);} catch {return json({error:'request_too_large'},413,cors);}}
