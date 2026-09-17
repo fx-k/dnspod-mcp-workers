@@ -9,6 +9,8 @@ workers_dev = true
 DNSPOD_READ_ONLY = "true"
 DNSPOD_ALLOW_DESTRUCTIVE = "false"
 DNSPOD_WRITE_DOMAINS = ""
+# ChatGPT OAuth/token/MCP 浏览器请求可能携带 Origin；仅允许精确来源，不要改成 *。
+CORS_ALLOWED_ORIGINS = "https://chatgpt.com"
 
 [[durable_objects.bindings]]
 name = "OAUTH_STATE"
