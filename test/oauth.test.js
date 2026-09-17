@@ -17,13 +17,17 @@ async function req(env,path,body,headers={},method) {
 async function registration(env,method='none') {
  const r=await req(env,'/register',{client_name:'测试客户端',redirect_uris:[redirect],token_endpoint_auth_method:method});assert.equal(r.status,201);return r.json();
 }
-async function authCode(env,client,changes={}) {
+async function authPage(env,client,changes={}) {
  const params=new URLSearchParams({client_id:client.client_id,redirect_uri:redirect,response_type:'code',code_challenge:challenge,code_challenge_method:'S256',scope:'mcp',state:'original-state',resource:origin+'/mcp',...changes});
  const path='/authorize?'+params;
  const get=await req(env,path);assert.equal(get.status,200);
- const cookie=get.headers.get('Set-Cookie').split(';')[0];const csrf=cookie.split('=')[1];
- const post=await req(env,path,new URLSearchParams({csrf,password:env.OAUTH_PASSWORD}).toString(),{'Content-Type':'application/x-www-form-urlencoded',Cookie:cookie});
- assert.equal(post.status,302);const target=new URL(post.headers.get('Location'));assert.equal(target.searchParams.get('state'),'original-state');
+ const text=await get.text();const csrf=text.match(/name="csrf" value="([^"]+)"/u)?.[1];assert.ok(csrf);
+ return {path,csrf};
+}
+async function authCode(env,client,changes={}) {
+ const {path,csrf}=await authPage(env,client,changes);
+ const post=await req(env,path,new URLSearchParams({csrf,password:env.OAUTH_PASSWORD}).toString(),{'Content-Type':'application/x-www-form-urlencoded'});
+ assert.equal(post.status,303);const target=new URL(post.headers.get('Location'));assert.equal(target.searchParams.get('state'),'original-state');assert.equal(target.searchParams.get('iss'),origin);
  return target.searchParams.get('code');
 }
 function authFields(client) {return {client_id:client.client_id,...(client.token_endpoint_auth_method==='client_secret_post'?{client_secret:client.client_secret}:{})};}
@@ -75,9 +79,16 @@ test('未登记客户端与 plain/缺失 PKCE 拒绝',async()=>{
   assert.equal((await req(env,'/authorize?'+query)).status,400);
  }
 });
-test('没有匹配 Cookie 的授权 POST 被 CSRF 防护拒绝',async()=>{
- const env=makeEnv(),client=await registration(env);const query=new URLSearchParams({client_id:client.client_id,redirect_uri:redirect,response_type:'code',code_challenge:challenge,code_challenge_method:'S256'});
- const result=await req(env,'/authorize?'+query,'csrf=fake&password='+env.OAUTH_PASSWORD,{'Content-Type':'application/x-www-form-urlencoded'});assert.equal(result.status,400);
+test('服务端一次性 CSRF nonce 不依赖 Cookie，伪造或重放会失败',async()=>{
+ const env=makeEnv(),client=await registration(env);const {path,csrf}=await authPage(env,client);
+ const fake=await req(env,path,'csrf=fake&password='+env.OAUTH_PASSWORD,{'Content-Type':'application/x-www-form-urlencoded'});assert.equal(fake.status,400);
+ const ok=await req(env,path,new URLSearchParams({csrf,password:env.OAUTH_PASSWORD}).toString(),{'Content-Type':'application/x-www-form-urlencoded'});assert.equal(ok.status,303);
+ const replay=await req(env,path,new URLSearchParams({csrf,password:env.OAUTH_PASSWORD}).toString(),{'Content-Type':'application/x-www-form-urlencoded'});assert.equal(replay.status,400);
+});
+test('密码错误不会消耗授权 nonce，可在同页重试',async()=>{
+ const env=makeEnv(),client=await registration(env);const {path,csrf}=await authPage(env,client);
+ const bad=await req(env,path,new URLSearchParams({csrf,password:'wrong-password'}).toString(),{'Content-Type':'application/x-www-form-urlencoded'});assert.equal(bad.status,401);assert.match(await bad.text(),/密码错误/);
+ const good=await req(env,path,new URLSearchParams({csrf,password:env.OAUTH_PASSWORD}).toString(),{'Content-Type':'application/x-www-form-urlencoded'});assert.equal(good.status,303);
 });
 test('已签名但过期/错误 aud/iss/scope/version/iat 的 token 拒绝',async()=>{
  const env=makeEnv();const time=Math.floor(Date.now()/1000);
@@ -89,7 +100,7 @@ test('已签名但过期/错误 aud/iss/scope/version/iat 的 token 拒绝',asyn
 test('HTTP discovery、初始化、通知、MCP 错误结果',async()=>{
  const env=makeEnv();const bearer=await access(env);const h={Authorization:'Bearer '+bearer};
  const unauthed=await req(env,'/mcp',{});assert.equal(unauthed.status,401);assert.match(unauthed.headers.get('WWW-Authenticate'),/oauth-protected-resource/);
- assert.deepEqual((await (await req(env,'/.well-known/oauth-authorization-server')).json()).code_challenge_methods_supported,['S256']);
+ const meta=await (await req(env,'/.well-known/oauth-authorization-server')).json();assert.deepEqual(meta.code_challenge_methods_supported,['S256']);assert.equal(meta.authorization_response_iss_parameter_supported,true);
  const init=await req(env,'/mcp',{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18'}},h);const body=await init.json();assert.equal(body.result.serverInfo.version,'3.0.0');assert.equal(body.result.protocolVersion,'2025-06-18');
  assert.equal((await req(env,'/mcp',{jsonrpc:'2.0',method:'notifications/initialized'},h)).status,202);
  assert.equal((await req(env,'/mcp','not json',h)).status,400);
