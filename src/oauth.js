@@ -58,8 +58,12 @@ function metadata(origin) {
 function page(url,client,csrf,error='') {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>授权 DNSPod MCP</title><style>body{font:16px system-ui;max-width:560px;margin:10vh auto;padding:24px;line-height:1.7}input,button{font:inherit;padding:10px}code{overflow-wrap:anywhere}.error{color:#b00020}</style><h1>授权 DNSPod MCP</h1><p>客户端：${escapeHtml(client.client_name)}<br>返回地址：<code>${escapeHtml(url.searchParams.get('redirect_uri'))}</code></p><p>授权后客户端可以访问此 Worker 提供的 DNSPod 工具。写入范围仍受服务端设置和腾讯云 CAM 权限限制。请核对客户端与返回地址。</p><p class="error">${escapeHtml(error)}</p><form method="POST" action="${escapeHtml(url.pathname+url.search)}"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><label>访问密码 <input type="password" name="password" required autocomplete="current-password"></label><button>确认授权</button></form></html>`;
 }
+function callbackPage(target) {
+  const safe = escapeHtml(target);
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="0;url=${safe}"><title>正在返回 ChatGPT</title><style>body{font:16px system-ui;max-width:560px;margin:10vh auto;padding:24px;line-height:1.7}a{display:inline-block;padding:10px 14px;border:1px solid #999;border-radius:8px;text-decoration:none;color:inherit}</style></head><body><h1>授权成功</h1><p>正在返回 ChatGPT…</p><p>如果没有自动跳转，请点击：</p><p><a href="${safe}" rel="noreferrer">继续返回 ChatGPT</a></p></body></html>`;
+}
 function html(text,status=200,headers={}) {
-  return new Response(text,{status,headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store',
+  return new Response(text,{status,headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer',
     'Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",'X-Content-Type-Options':'nosniff',...headers}});
 }
 async function rate(request,env,kind,limit,seconds) {
@@ -128,8 +132,12 @@ export async function oauth(request,env) {
       if (url.searchParams.has('state')) redir.searchParams.set('state',url.searchParams.get('state'));
       // RFC 9207：ChatGPT/Codex 用 iss 绑定授权响应与已发现的 issuer，避免 AS mix-up。
       redir.searchParams.set('iss',url.origin);
-      // POST 后使用 303，明确要求浏览器/WebView 以 GET 导航到 callback。
-      return new Response(null,{status:303,headers:{Location:redir.href,'Cache-Control':'no-store'}});
+      // ChatGPT 当前 OAuth WebView 在部分环境不会自动跟随授权 POST 的跨域 303。
+      // 对官方稳定 callback 返回一个 no-store 成功页，用 meta refresh 自动导航，并保留手动继续链接。
+      if (redir.origin === 'https://chatgpt.com' && redir.pathname === '/connector_platform_oauth_redirect') {
+        return html(callbackPage(redir.href),200);
+      }
+      return new Response(null,{status:303,headers:{Location:redir.href,'Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
     }
     if (path === '/token' && request.method === 'POST') {
       await rate(request,env,'token',60,60);
