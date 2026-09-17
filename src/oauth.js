@@ -51,7 +51,7 @@ function validRedirect(value,env) {
   } catch { return false; }
 }
 function metadata(origin) {
-  return {issuer:origin,authorization_endpoint:origin+'/authorize',token_endpoint:origin+'/token',registration_endpoint:origin+'/register',
+  return {issuer:origin,authorization_response_iss_parameter_supported:true,authorization_endpoint:origin+'/authorize',token_endpoint:origin+'/token',registration_endpoint:origin+'/register',
     response_types_supported:['code'],grant_types_supported:['authorization_code','refresh_token'],code_challenge_methods_supported:['S256'],
     token_endpoint_auth_methods_supported:['none','client_secret_post','client_secret_basic'],scopes_supported:['mcp']};
 }
@@ -108,22 +108,28 @@ export async function oauth(request,env) {
         await rate(request,env,'authorize-get',60,600);
         const csrf = token();
         await state(env,'csrf:'+csrf,'put',{value:{query:url.search},ttl:600});
-        return html(page(url,client,csrf),200,{'Set-Cookie':`__Host-mcp-csrf=${csrf}; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=600`});
+        // 使用服务端保存的一次性同步令牌，不依赖 OAuth WebView 是否持久化 Cookie。
+        return html(page(url,client,csrf));
       }
       await rate(request,env,'authorize-post',10,600);
       const form = await request.formData();
       const csrf = String(form.get('csrf') || '');
-      const cookie = request.headers.get('Cookie')?.match(/(?:^|;\s*)__Host-mcp-csrf=([^;]+)/u)?.[1];
-      if (!csrf || csrf !== cookie) fail('invalid_request','CSRF 校验失败，请重新打开授权页');
-      const nonce = await state(env,'csrf:'+csrf,'take');
+      if (!csrf) fail('invalid_request','授权页面缺少 CSRF 令牌，请重新打开授权页');
+      const nonce = await state(env,'csrf:'+csrf,'get');
       if (!nonce || nonce.query !== url.search) fail('invalid_request','授权页面已失效，请重新打开');
-      if (await digest(String(form.get('password') || '')) !== await digest(env.OAUTH_PASSWORD)) fail('access_denied','密码错误，请重新打开授权页',401);
+      // 密码错误时不消耗 nonce，让用户可在同一授权页重试；正确密码后再原子 take。
+      if (await digest(String(form.get('password') || '')) !== await digest(env.OAUTH_PASSWORD)) return html(page(url,client,csrf,'密码错误，请重试'),401);
+      const consumed = await state(env,'csrf:'+csrf,'take');
+      if (!consumed || consumed.query !== url.search) fail('invalid_request','授权页面已提交或失效，请重新打开');
       const code=token();
       await state(env,'code:'+code,'put',{ttl:600,value:{client_id:client.client_id,redirect_uri:url.searchParams.get('redirect_uri'),challenge:url.searchParams.get('code_challenge'),resource:url.origin+'/mcp'}});
       const redir = new URL(url.searchParams.get('redirect_uri'));
       redir.searchParams.set('code',code);
       if (url.searchParams.has('state')) redir.searchParams.set('state',url.searchParams.get('state'));
-      return new Response(null,{status:302,headers:{Location:redir.href,'Cache-Control':'no-store','Set-Cookie':'__Host-mcp-csrf=; Secure; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'}});
+      // RFC 9207：ChatGPT/Codex 用 iss 绑定授权响应与已发现的 issuer，避免 AS mix-up。
+      redir.searchParams.set('iss',url.origin);
+      // POST 后使用 303，明确要求浏览器/WebView 以 GET 导航到 callback。
+      return new Response(null,{status:303,headers:{Location:redir.href,'Cache-Control':'no-store'}});
     }
     if (path === '/token' && request.method === 'POST') {
       await rate(request,env,'token',60,60);
