@@ -6,7 +6,7 @@
   "description": "Cloudflare Workers 上的 DNSPod MCP：线路发现、记录管理、批量任务与快照回滚",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check src/index.js && node --check src/tools.js && node --check src/tencent.js && node --check src/oauth.js && node --check src/validation.js && node --check src/oauth-state.js",
+    "check": "node --check src/index.js && node --check src/tools.js && node --check src/tencent.js && node --check src/oauth.js && node --check src/validation.js && node --check src/oauth-state.js && node --check src/mcp.js",
     "dev": "wrangler dev --ip 127.0.0.1 --port 8787",
     "deploy": "wrangler deploy",
     "build": "wrangler deploy --dry-run --outdir dist",

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import worker,{handleMcp} from '../src/index.js';
+import worker from '../src/index.js';
+import {handleMcp} from '../src/mcp.js';
 import {signJwt} from '../src/oauth.js';
 import {state} from '../src/oauth-state.js';
 import {memoryNamespace} from './helpers.js';
@@ -114,3 +115,8 @@ test('授权状态过期，take 原子一次性消费，rate 严格限流',async
  assert.equal(await state(env,'limit','rate',{ttl:60,limit:1}),true);assert.equal(await state(env,'limit','rate',{ttl:60,limit:1}),false);
 });
 test('DCR 限流有效',async()=>{const env=makeEnv();for(let n=0;n<20;n++)assert.equal((await req(env,'/register',{redirect_uris:[redirect]})).status,201);assert.equal((await req(env,'/register',{redirect_uris:[redirect]})).status,429);});
+
+test('Workers 主入口只导出默认处理器与 Durable Object 类',async()=>{
+ const entry=await import('../src/index.js');
+ assert.deepEqual(Object.keys(entry).sort(),['OAuthState','default']);
+});
