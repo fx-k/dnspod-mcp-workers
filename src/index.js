@@ -18,8 +18,12 @@ export default {
   async fetch(initial,env) {
     const url=new URL(initial.url);const path=url.pathname;
     const origin=initial.headers.get('Origin');
-    const allowed=[url.origin,...String(env.CORS_ALLOWED_ORIGINS || '').split(',').map(x=>x.trim()).filter(Boolean)];
-    if(origin && !allowed.includes(origin)) return json({error:'origin_not_allowed'},403);
+    const configuredOrigins=String(env.CORS_ALLOWED_ORIGINS || '').split(',').map(x=>x.trim()).filter(Boolean);
+    const allowed=[url.origin,...configuredOrigins];
+    if(origin && !allowed.includes(origin)) {
+      console.warn('origin_not_allowed',JSON.stringify({origin,path,method:initial.method,allowed}));
+      return json({error:'origin_not_allowed',origin},403);
+    }
     const cors=origin ? {'Access-Control-Allow-Origin':origin,Vary:'Origin','Access-Control-Allow-Headers':'Authorization,Content-Type,Accept,MCP-Protocol-Version','Access-Control-Allow-Methods':'GET,POST,OPTIONS','Access-Control-Expose-Headers':'WWW-Authenticate'} : {};
     if(initial.method === 'OPTIONS') return new Response(null,{status:204,headers:cors});
     let request=initial;
@@ -27,7 +31,7 @@ export default {
     const authResponse=await oauth(request,env);
     if(authResponse) {const out=new Response(authResponse.body,authResponse);for(const [k,v]of Object.entries(cors))out.headers.set(k,v);return out;}
     if(path === '/health') return json({ok:true,version:VERSION,toolCount:TOOLS.length,policy:policy(env),oauthConfigured:!!env.OAUTH_STATE && !!env.OAUTH_PASSWORD && !!env.OAUTH_JWT_SECRET,
-      note:'存活检查不代表腾讯云凭据、CAM 权限或真实 DNS 调用已通过'},200,cors);
+      corsAllowedOrigins:configuredOrigins,note:'存活检查不代表腾讯云凭据、CAM 权限或真实 DNS 调用已通过'},200,cors);
     if(path === '/') return new Response(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>DNSPod MCP v3</title><h1>DNSPod MCP v${VERSION}</h1><p>${TOOLS.length} 个工具；默认只读。ChatGPT Remote MCP 地址：</p><pre>${escapeHtml(url.origin)}/mcp</pre><p>接入后完成 OAuth 授权。新增写操作前请确认服务端开关和域名白名单。</p><ul>${TOOLS.map(t=>`<li><code>${t.name}</code> — ${escapeHtml(t.title)}</li>`).join('')}</ul></html>`,{headers:{'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff'}});
     if(['/sse','/message'].includes(path)) return json({error:'legacy_transport_removed',message:'v3 使用标准无状态 Streamable HTTP，请连接 /mcp'},410,cors);
     if(path !== '/mcp') return json({error:'not_found'},404,cors);
