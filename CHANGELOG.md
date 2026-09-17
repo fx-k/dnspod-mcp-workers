@@ -7,12 +7,13 @@
 - 从 9 扩展为 31 个 MCP 工具：记录/能力发现、状态/备注/DDNS、分组、批量及结果、快照及回滚结果。
 - 默认只读、写域名白名单、危险操作开关和服务端参数校验。
 - 局部修改前读取原记录；保留未指定字段，支持 ExpectedValue 预检。
-- 77 项离线回归、31 个 Schema 元结构验收、Wrangler 构建和本地 workerd/DO 验收工作流。
+- 78 项离线回归、31 个 Schema 元结构验收、Wrangler 构建和本地 workerd/DO 验收工作流。
 
 ### 修正
 
 - 免费版线路说明、MX 优先级范围、空备注/零值丢失、批量 V3/记录分组字段契约。
 - 不再把 JobId / TaskId 视为完成；不编造 CreateSnapshot 的 SnapshotId。
+- 修复 workerd 主入口命名导出兼容问题；实际 workerd/SQLite DO 验收已通过。
 
 ### 兼容性变更
 
